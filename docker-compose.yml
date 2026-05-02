@@ -1,0 +1,16 @@
+services:
+  miyo:
+    build:
+      context: .
+    # ports:
+    #   - "8080:8080"
+    volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+    network_mode: host
+  # example-app:
+  #   image: "hello-world:latest"
+  #   container_name: example-app
+  #   labels:
+  #     dns.domain: "test.local"
+  #
+  #

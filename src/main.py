@@ -16,11 +16,14 @@ logging.basicConfig(level=logging.INFO)
 def get_host_address():
     address = dotenv.dotenv_values(".env").get("HOST_ADDRESS")
     if address:
-        logging.info("yeeep")
         return address
     else:
-        logging.info("nooo")
-        return socket.gethostbyname(socket.gethostname())
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except socket.gaierror:
+            logging.error(
+                "Unable to obtain a host address. Please set it in the .env file instead."
+            )
 
 
 def get_records(client: DockerClient):
@@ -47,9 +50,11 @@ def handle_docker_events(client: DockerClient):
 
 def main():
     logging.info("starting app...")
+    get_host_address()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", 8080))
     client = docker.from_env()
+    logging.info("getting records")
     get_records(client)
     threading.Thread(target=handle_docker_events, args=(client,), daemon=True).start()
     while True:

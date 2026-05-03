@@ -43,7 +43,7 @@ def main():
     logging.info("starting app...")
     get_host_address()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", 8080))
+    sock.bind(("0.0.0.0", 53))
     client = docker.from_env()
     logging.info("getting records")
     get_records(client)

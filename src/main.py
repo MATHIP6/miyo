@@ -1,9 +1,9 @@
+import os
 import socket
 import dnslib
 import docker
 from docker.client import DockerClient
 from docker.models.containers import Container
-import dotenv
 import threading
 import logging
 
@@ -14,16 +14,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 def get_host_address():
-    address = dotenv.dotenv_values(".env").get("HOST_ADDRESS")
-    if address:
-        return address
-    else:
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except socket.gaierror:
-            logging.error(
-                "Unable to obtain a host address. Please set it in the .env file instead."
-            )
+    return os.getenv("HOST_ADDRESS") or "127.0.0.1"
 
 
 def get_records(client: DockerClient):

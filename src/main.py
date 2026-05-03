@@ -12,6 +12,11 @@ records = []
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
+UPSTREAM_DNS = (
+    os.getenv("UPSTREAM_DNS") or "1.1.1.1",
+    os.getenv("UPSTREAM_DNS_PORT") or 53,
+)
+
 
 def get_host_address():
     return os.getenv("HOST_ADDRESS") or "127.0.0.1"
@@ -39,6 +44,13 @@ def handle_docker_events(client: DockerClient):
                 records.remove(domain)
 
 
+def forward(record: dnslib.DNSRecord):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.sendto(record.pack(), UPSTREAM_DNS)
+    response, _ = sock.recvfrom(4096)
+    return response
+
+
 def main():
     logging.info("starting app...")
     get_host_address()
@@ -53,13 +65,18 @@ def main():
         try:
             message = dnslib.DNSRecord.parse(data)
             req_domain = str(message.q.qname)[:-1]
-            response = message.reply()
+            response = None
             for domain in records:
                 if domain == req_domain:
+                    response = message.reply()
                     response.add_answer(
                         *dnslib.RR.fromZone(domain + " A " + get_host_address())
                     )
-            sock.sendto(response.pack(), addr)
+                    sock.sendto(response.pack(), addr)
+                    break
+            if not response:
+                response = forward(message)
+                sock.sendto(response, addr)
         except dnslib.DNSError:
             logging.warning("Warning: Invalid packet received")
 

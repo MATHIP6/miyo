@@ -3,8 +3,10 @@ services:
     image: miyo
     environment:
       HOST_ADDRESS: 192.168.1.11
-    # ports:
-    #   - "53:8080"
+      # UPSTREAM_DNS: 8.8.8.8 Optional
+      # UPSTREAM_DNS_PORT: 53
+    ports:
+      - "8080:53"
     volumes:
         - /var/run/docker.sock:/var/run/docker.sock
-    network_mode: host
+    # network_mode: host

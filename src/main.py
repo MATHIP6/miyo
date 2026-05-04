@@ -1,21 +1,19 @@
 import os
-import socket
 import dnslib
+from dnslib.dns import DNSRecord
 import docker
 from docker.client import DockerClient
 from docker.models.containers import Container
 import threading
 import logging
+from dnslib.server import DNSHandler, DNSServer
+from dnslib.proxy import ProxyResolver
+import time
 
 records = []
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-UPSTREAM_DNS = (
-    os.getenv("UPSTREAM_DNS") or "1.1.1.1",
-    os.getenv("UPSTREAM_DNS_PORT") or 53,
-)
 
 
 def get_host_address():
@@ -33,52 +31,72 @@ def get_records(client: DockerClient):
 def handle_docker_events(client: DockerClient):
     for event in client.events(decode=True):
         if event["Type"] != "container":
+            handle_docker_events(client)
             return
         container_id = event["Actor"]["ID"]
-        container: Container = client.containers.get(container_id)
-        domain = container.labels.get("dns.domain")
-        if domain:
-            if event["Action"] == "create":
+
+        if event["Action"] == "create":
+            container = client.containers.get(container_id)
+            domain = container.labels.get("dns.domain")
+            if domain:
                 records.append(domain)
-            elif event["Action"] == "kill":
+        elif event["Action"] == "kill":
+            container = None
+
+            for i_container in client.containers.list():
+                if i_container.id == container_id:
+                    container = i_container
+
+            if container is None:
+                handle_docker_events(client)
+                return
+
+            domain = container.labels.get("dns.domain")
+            if domain:
                 records.remove(domain)
+    handle_docker_events(client)
 
 
-def forward(record: dnslib.DNSRecord):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.sendto(record.pack(), UPSTREAM_DNS)
-    response, _ = sock.recvfrom(4096)
-    return response
+class Resolverr(ProxyResolver):
+    def __init__(self, upstream: str, port):
+        self.upstream = upstream
+        super().__init__(upstream, port, 5)
+
+    def resolve(self, request: DNSRecord, handler: DNSHandler):
+        reply = request.reply()
+        handler.handle
+        req_domain = str(request.q.qname)[:-1]
+        for domain in records:
+            if domain == req_domain:
+                reply.add_answer(
+                    *dnslib.RR.fromZone(domain + " A " + get_host_address())
+                )
+                return reply
+        return super().resolve(request, handler)
 
 
 def main():
-    logging.info("starting app...")
-    get_host_address()
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", 53))
+    logger.info("starting app...")
+
     client = docker.from_env()
     logging.info("getting records")
     get_records(client)
     threading.Thread(target=handle_docker_events, args=(client,), daemon=True).start()
-    while True:
-        data, addr = sock.recvfrom(512)
-        try:
-            message = dnslib.DNSRecord.parse(data)
-            req_domain = str(message.q.qname)[:-1]
-            response = None
-            for domain in records:
-                if domain == req_domain:
-                    response = message.reply()
-                    response.add_answer(
-                        *dnslib.RR.fromZone(domain + " A " + get_host_address())
-                    )
-                    sock.sendto(response.pack(), addr)
-                    break
-            if not response:
-                response = forward(message)
-                sock.sendto(response, addr)
-        except dnslib.DNSError:
-            logging.warning("Warning: Invalid packet received")
+
+    resolverr = Resolverr(
+        os.getenv("UPSTREAM_DNS") or "1.1.1.1", os.getenv("UPSTREAM_DNS_PORT") or 53
+    )
+    server = DNSServer(resolverr, get_host_address() or "", 53)
+    server.start_thread()
+
+    try:
+        while server.isAlive():
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        logger.info("stopping app...")
+        server.stop()
 
 
 if __name__ == "__main__":
